@@ -55,13 +55,6 @@ bl_info = {
     "wiki_url": "",
     "category": '3D View'}
 
-if "bpy" in locals():
-    import imp
-    imp.reload(guide_mesh)
-    imp.reload(collider)
-else:
-    from . import guide_mesh
-    from . import collider 
 
 import bpy
 import bmesh
@@ -69,6 +62,10 @@ import numpy as np
 from numpy import newaxis as nax
 from bpy_extras import view3d_utils
 import time
+
+from . import guide_mesh
+from . import collider 
+from . import geometry 
 
 #enable_numexpr = True
 enable_numexpr = False
@@ -81,167 +78,10 @@ if you_have_a_sense_of_humor:
     import antigravity
 
 
-def get_co(ob, arr=None, key=None): # key
-    """Returns vertex coords as N x 3"""
-    c = len(ob.data.vertices)
-    if arr is None:    
-        arr = np.zeros(c * 3, dtype=np.float32)
-    if key is not None:
-        ob.data.shape_keys.key_blocks[key].data.foreach_get('co', arr.ravel())        
-        arr.shape = (c, 3)
-        return arr
-    ob.data.vertices.foreach_get('co', arr.ravel())
-    arr.shape = (c, 3)
-    return arr
 
 
-def get_proxy_co(ob, arr, me):
-    """Returns vertex coords with modifier effects as N x 3"""
-    if arr is None:
-        arr = np.zeros(len(me.vertices) * 3, dtype=np.float32)
-        arr.shape = (arr.shape[0] //3, 3)    
-    c = arr.shape[0]
-    me.vertices.foreach_get('co', arr.ravel())
-    arr.shape = (c, 3)
-    return arr
 
 
-def triangulate(me, ob=None):
-    """Requires a mesh. Returns an index array for viewing co as triangles"""
-    obm = bmesh.new()
-    obm.from_mesh(me)        
-    bmesh.ops.triangulate(obm, faces=obm.faces)
-    #obm.to_mesh(me)        
-    count = len(obm.faces)    
-    #tri_idx = np.zeros(count * 3, dtype=np.int32)        
-    #me.polygons.foreach_get('vertices', tri_idx)
-    tri_idx = np.array([[v.index for v in f.verts] for f in obm.faces])
-    
-    # Identify bend spring groups. Each edge gets paired with two points on tips of tris around edge    
-    # Restricted to edges with two linked faces on a triangulated version of the mesh
-    if ob is not None:
-        link_ed = [e for e in obm.edges if len(e.link_faces) == 2]
-        ob.bend_eidx = np.array([[e.verts[0].index, e.verts[1].index] for e in link_ed])
-        fv = np.array([[[v.index for v in f.verts] for f in e.link_faces] for e in link_ed])
-        fv.shape = (fv.shape[0],6)
-        ob.bend_tips = np.array([[idx for idx in fvidx if idx not in e] for e, fvidx in zip(ob.bend_eidx, fv)])
-    obm.free()
-    
-    return tri_idx#.reshape(count, 3)
-
-
-def tri_normals_in_place(object, tri_co):    
-    """Takes N x 3 x 3 set of 3d triangles and 
-    returns non-unit normals and origins"""
-    object.origins = tri_co[:,0]
-    object.cross_vecs = tri_co[:,1:] - object.origins[:, nax]
-    object.normals = np.cross(object.cross_vecs[:,0], object.cross_vecs[:,1])
-    object.nor_dots = np.einsum("ij, ij->i", object.normals, object.normals)
-    object.normals /= np.sqrt(object.nor_dots)[:, nax]
-
-
-def get_tri_normals(tr_co):
-    """Takes N x 3 x 3 set of 3d triangles and 
-    returns non-unit normals and origins"""
-    origins = tr_co[:,0]
-    cross_vecs = tr_co[:,1:] - origins[:, nax]
-    return cross_vecs, np.cross(cross_vecs[:,0], cross_vecs[:,1]), origins
-
-
-def closest_points_edge(vec, origin, p):
-    '''Returns the location of the point on the edge'''
-    vec2 = p - origin
-    d = (vec2 @ vec) / (vec @ vec)
-    cp = vec * d[:, nax]
-    return cp, d
-
-
-def proxy_in_place(object, me):
-    """Overwrite vert coords with modifiers in world space"""
-    me.vertices.foreach_get('co', object.co.ravel())
-    object.co = apply_transforms(object.ob, object.co)
-
-
-def apply_rotation(object):
-    """When applying vectors such as normals we only need
-    to rotate"""
-    m = np.array(object.ob.matrix_world)
-    mat = m[:3, :3].T
-    object.v_normals = object.v_normals @ mat
-    
-
-def proxy_v_normals_in_place(object, world=True, me=None):
-    """Overwrite vert coords with modifiers in world space"""
-    me.vertices.foreach_get('normal', object.v_normals.ravel())
-    if world:    
-        apply_rotation(object)
-
-
-def proxy_v_normals(ob, me):
-    """Overwrite vert coords with modifiers in world space"""
-    arr = np.zeros(len(me.vertices) * 3, dtype=np.float32)
-    me.vertices.foreach_get('normal', arr)
-    arr.shape = (arr.shape[0] //3, 3)
-    m = np.array(ob.matrix_world, dtype=np.float32)    
-    mat = m[:3, :3].T # rotates backwards without T
-    return arr @ mat
-
-
-def apply_transforms(ob, co):
-    """Get vert coords in world space"""
-    m = np.array(ob.matrix_world, dtype=np.float32)    
-    mat = m[:3, :3].T # rotates backwards without T
-    loc = m[:3, 3]
-    return co @ mat + loc
-
-
-def apply_in_place(ob, arr, cloth):
-    """Overwrite vert coords in world space"""
-    m = np.array(ob.matrix_world, dtype=np.float32)    
-    mat = m[:3, :3].T # rotates backwards without T
-    loc = m[:3, 3]
-    arr[:] = arr @ mat + loc
-    #cloth.co = cloth.co @ mat + loc
-
-
-def applied_key_co(ob, arr=None, key=None):
-    """Get vert coords in world space"""
-    c = len(ob.data.vertices)
-    if arr is None:
-        arr = np.zeros(c * 3, dtype=np.float32)
-    ob.data.shape_keys.key_blocks[key].data.foreach_get('co', arr)
-    arr.shape = (c, 3)
-    m = np.array(ob.matrix_world)    
-    mat = m[:3, :3].T # rotates backwards without T
-    loc = m[:3, 3]
-    return co @ mat + loc
-
-
-def revert_transforms(ob, co):
-    """Set world coords on object. 
-    Run before setting coords to deal with object transforms
-    if using apply_transforms()"""
-    m = np.linalg.inv(ob.matrix_world)    
-    mat = m[:3, :3].T # rotates backwards without T
-    loc = m[:3, 3]
-    return co @ mat + loc  
-
-
-def revert_in_place(ob, co):
-    """Revert world coords to object coords in place."""
-    m = np.linalg.inv(ob.matrix_world)    
-    mat = m[:3, :3].T # rotates backwards without T
-    loc = m[:3, 3]
-    co[:] = co @ mat + loc
-
-
-def revert_rotation(ob, co):
-    """When reverting vectors such as normals we only need
-    to rotate"""
-    #m = np.linalg.inv(ob.matrix_world)    
-    m = np.array(ob.matrix_world)
-    mat = m[:3, :3] # rotates backwards without T
-    return co @ mat
 
 
 def get_last_object():
@@ -265,7 +105,7 @@ def get_poly_centers(ob, type=np.float32, mesh=None):
         ren_set = np.copy(show)
         ob.modifiers.foreach_get('show_render', show)
         ob.modifiers.foreach_set('show_render', ren_set)
-        mod = True
+        mod = ue
     p_count = len(mesh.polygons)
     center = np.zeros(p_count * 3, dtype=type)
     mesh.polygons.foreach_get('center', center)
@@ -572,7 +412,7 @@ def generate_wind(wind_vec, cloth):
     """Maintains a wind array and adds it to the cloth vel"""    
     
     tri_nor = cloth.normals # non-unit calculated by tri_normals_in_place() per each triangle
-    w_vec = revert_rotation(cloth.ob, wind_vec)
+    w_vec = geometry.revert_rotation(cloth.ob, wind_vec)
 
     turb = cloth.ob.modeling_cloth_turbulence    
     if turb != 0: 
@@ -869,10 +709,10 @@ def create_instance(new=True):
     # -------------->>>
 
     # new self collisions:
-    cloth.tridex = triangulate(cloth.ob.data, cloth)
+    cloth.tridex = geometry.triangulate(cloth.ob.data, cloth)
     cloth.tridexer = np.arange(cloth.tridex.shape[0], dtype=np.int32)
     cloth.tri_co = cloth.co[cloth.tridex]
-    tri_normals_in_place(cloth, cloth.tri_co) # non-unit normals
+    geometry.tri_normals_in_place(cloth, cloth.tri_co) # non-unit normals
     # -------------->>>
     
     tri_uni, tri_inv, tri_counts = np.unique(cloth.tridex, return_inverse=True, return_counts=True)
@@ -984,7 +824,7 @@ def run_handler(cloth):
 
             # refresh normals for inflate wind and self collisions
             cloth.tri_co = cloth.co[cloth.tridex]
-            tri_normals_in_place(cloth, cloth.tri_co) # unit normals
+            geometry.tri_normals_in_place(cloth, cloth.tri_co) # unit normals
 
 
             
@@ -1012,7 +852,7 @@ def run_handler(cloth):
             # gravity
             grav = cloth.ob.modeling_cloth_gravity * 0.01# / cloth.ob.modeling_cloth_iterations)
             if grav != 0:
-                cloth.vel += revert_rotation(cloth.ob, np.array([0, 0, grav])) / np.array(cloth.ob.scale)
+                cloth.vel += geometry.revert_rotation(cloth.ob, np.array([0, 0, grav])) / np.array(cloth.ob.scale)
             
             # can cheat here:
             #spring_mean = np.mean(spring_dif, axis=0)
@@ -1084,7 +924,8 @@ def run_handler(cloth):
             if cloth.ob.modeling_cloth_object_detect:
                 if cloth.ob.modeling_cloth_self_collision:
                     self_collide(cloth)
-                
+                # print(extra_data)
+                # extra_data['colliders'] = {}
                 if extra_data['colliders'] is not None:
                     for i, val in extra_data['colliders'].items():
                         #if val.ob.modeling_cloth_self_collision == cloth.ob:    
@@ -1343,8 +1184,8 @@ def object_collide(cloth, object):
     #   cloth.re_col = np.empty((0,3), dtype=np.float32)
     
     proxy = object.ob.to_mesh(bpy.context.scene, True, 'PREVIEW')
-    proxy_in_place(object, proxy)
-    apply_in_place(cloth.ob, cloth.co, cloth)
+    geometry.proxy_in_place(object, proxy)
+    geometry.apply_in_place(cloth.ob, cloth.co, cloth)
 
     inner_margin = object.ob.modeling_cloth_inner_margin
     outer_margin = object.ob.modeling_cloth_outer_margin
@@ -1358,7 +1199,7 @@ def object_collide(cloth, object):
     
     if box_check:
 
-        proxy_v_normals_in_place(object, True, proxy)
+        geometry.proxy_v_normals_in_place(object, True, proxy)
         tri_co = object.co[object.tridex]
         tri_vo = object.vel[object.tridex]
 
@@ -1377,7 +1218,7 @@ def object_collide(cloth, object):
                     # update the normals. cross_vecs used by barycentric tri check
                     # move the surface along the vertex normals by the outer margin distance
                     marginalized = (object.co + object.v_normals * outer_margin)[object.tridex]
-                    tri_normals_in_place(object, marginalized)
+                    geometry.tri_normals_in_place(object, marginalized)
                     
                     # add normals to make extruded tris
                     u_norms = object.normals[tris_in]
@@ -1415,7 +1256,7 @@ def object_collide(cloth, object):
                         #   cloth.col_idx = col_idx
                         
     object.vel[:] = object.co    
-    revert_in_place(cloth.ob, cloth.co)
+    geometry.revert_in_place(cloth.ob, cloth.co)
     
     #temp_ob = bpy.data.objects.new('__TEMP', proxy)
     #for key in proxy.shape_keys.key_blocks:
@@ -1651,7 +1492,7 @@ def main(context, event):
 
     ray_target = ray_origin + view_vector
     
-    guide = create_giude()
+    guide = guide_mesh.create_guide()
 
     def visible_objects_and_duplis():
         """Loop over (object, matrix) pairs (mesh only)"""
@@ -1681,8 +1522,13 @@ def main(context, event):
     # cast rays and find the closest object
     best_length_squared = -1.0
     best_obj = None
-    for obj, matrix in visible_objects_and_duplis():
-        hit, normal, face_index = obj_ray_cast(obj, matrix)
+    for iteration in visible_objects_and_duplis():
+        obj = iteration[0]
+        matrix = iteration[1]
+        obj_ray_cast_tuple = obj_ray_cast(obj, matrix)
+        hit = obj_ray_cast_tuple[0]
+        normal = obj_ray_cast_tuple[1] 
+        face_index = obj_ray_cast_tuple[2] 
         if hit is not None:
             hit_world = matrix * hit
             vidx = [v for v in obj.data.polygons[face_index].vertices]
@@ -1767,7 +1613,7 @@ class ModelingClothPin(bpy.types.Operator):
                     extra_data['name'] = None        
         
         elif event.type in {'RIGHTMOUSE', 'ESC'}:
-            delete_giude()
+            guide_mesh.delete_guide()
             cloths = [i for i in bpy.data.objects if i.modeling_cloth] # so we can select an empty and keep the settings menu up
             extra_data['alert'] = False
             if len(cloths) > 0:                                        #
@@ -1842,8 +1688,14 @@ def main_drag(context, event):
     best_length_squared = -1.0
     best_obj = None
 
-    for obj, matrix in visible_objects_and_duplis():
-        hit, normal, face_index, target = obj_ray_cast(obj, matrix)
+    for visible_objects_and_duplis_tuple in visible_objects_and_duplis():
+        obj = visible_objects_and_duplis_tuple[0]
+        matrix = visible_objects_and_duplis_tuple[1]
+        obj_ray_cast_tuple = obj_ray_cast(obj, matrix)
+        hit = obj_ray_cast_tuple[0]
+        normal = obj_ray_cast_tuple[1] 
+        face_index = obj_ray_cast_tuple[2]
+        target = obj_ray_cast_tuple[3]
         extra_data['target'] = target
         if hit is not None:
             
@@ -2202,9 +2054,10 @@ def create_properties():
     # -------------->>>
 
     # external collisions ------->>>
+    global extra_data
     bpy.types.Object.modeling_cloth_object_collision = bpy.props.BoolProperty(name="Modeling Cloth Self Collsion", 
         description="Detect and collide with this object", 
-        default=False, update=collider.collision_object_update)
+        default=False, update=(lambda self, context: collider.collision_object_update(self, context, extra_data)))
 
     #bpy.types.Object.modeling_cloth_collision_animated = bpy.props.BoolProperty(name="Modeling Cloth Collsion Animated", 
         #description="Treat collide object as animated. (turn off for speed on static objects)", 

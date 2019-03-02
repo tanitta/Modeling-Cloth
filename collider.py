@@ -1,3 +1,12 @@
+import bpy
+import bmesh
+import numpy as np
+from numpy import newaxis as nax
+from bpy_extras import view3d_utils
+import time
+from . import geometry
+
+
 class Collider(object):
     pass
 
@@ -13,17 +22,17 @@ def create_collider():
     # get proxy
     proxy = col.ob.to_mesh(bpy.context.scene, True, 'PREVIEW')
     
-    col.co = get_proxy_co(col.ob, None, proxy)
+    col.co = geometry.get_proxy_co(col.ob, None, proxy)
     col.idxer = np.arange(col.co.shape[0], dtype=np.int32)
-    proxy_in_place(col, proxy)
-    col.v_normals = proxy_v_normals(col.ob, proxy)
+    geometry.proxy_in_place(col, proxy)
+    col.v_normals = geometry.proxy_v_normals(col.ob, proxy)
     col.vel = np.copy(col.co)
-    col.tridex = triangulate(proxy)
+    col.tridex = geometry.triangulate(proxy)
     col.tridexer = np.arange(col.tridex.shape[0], dtype=np.int32)
     # cross_vecs used later by barycentric tri check
-    proxy_v_normals_in_place(col, True, proxy)
+    geometry.proxy_v_normals_in_place(col, True, proxy)
     marginalized = col.co + col.v_normals * col.ob.modeling_cloth_outer_margin
-    col.cross_vecs, col.origins, col.normals = get_tri_normals(marginalized[col.tridex])    
+    col.cross_vecs, col.origins, col.normals = geometry.get_tri_normals(marginalized[col.tridex])    
     
     # remove proxy
     bpy.data.meshes.remove(proxy)
@@ -35,22 +44,22 @@ def create_self_collider():
     # maybe fixed? !!! bug where first frame of collide uses empty data. Stuff goes flying.
     col = Collider()
     col.ob = bpy.context.object
-    col.co = get_co(col.ob, None)
-    proxy_in_place(col)
-    col.v_normals = proxy_v_normals(col.ob)
+    col.co = geometry.get_co(col.ob, None)
+    geometry.proxy_in_place(col)
+    col.v_normals = geometry.proxy_v_normals(col.ob)
     col.vel = np.copy(col.co)
     #col.tridex = triangulate(col.ob)
     col.tridexer = np.arange(col.tridex.shape[0], dtype=np.int32)
     # cross_vecs used later by barycentric tri check
-    proxy_v_normals_in_place(col)
+    geometry.proxy_v_normals_in_place(col)
     marginalized = col.co + col.v_normals * col.ob.modeling_cloth_outer_margin
-    col.cross_vecs, col.origins, col.normals = get_tri_normals(marginalized[col.tridex])    
+    col.cross_vecs, col.origins, col.normals = geometry.get_tri_normals(marginalized[col.tridex])    
 
     return col
 
 
 # collide object updater
-def collision_object_update(self, context):
+def collision_object_update(self, context, extra_data):
     """Updates the collider object"""    
     collide = self.modeling_cloth_object_collision
     # remove objects from dict if deleted

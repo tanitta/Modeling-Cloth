@@ -1,3 +1,10 @@
+import bpy
+import bmesh
+import numpy as np
+from numpy import newaxis as nax
+from bpy_extras import view3d_utils
+import time
+
 def generate_guide_mesh():
     """Makes the arrow that appears when creating pins"""
     verts = [[0.0, 0.0, 0.0], [-0.01, -0.01, 0.1], [-0.01, 0.01, 0.1], [0.01, -0.01, 0.1], [0.01, 0.01, 0.1], [-0.03, -0.03, 0.1], [-0.03, 0.03, 0.1], [0.03, 0.03, 0.1], [0.03, -0.03, 0.1], [-0.01, -0.01, 0.2], [-0.01, 0.01, 0.2], [0.01, -0.01, 0.2], [0.01, 0.01, 0.2]]
@@ -16,7 +23,7 @@ def generate_guide_mesh():
     return mesh_ob
 
 
-def create_giude():
+def create_guide():
     """Spawns the guide"""
     if 'ModelingClothPinGuide' in bpy.data.objects:
         mesh_ob = bpy.data.objects['ModelingClothPinGuide']
@@ -37,7 +44,7 @@ def create_giude():
     return mesh_ob
 
 
-def delete_giude():
+def delete_guide():
     """Deletes the arrow"""
     if 'ModelingClothPinGuide' in bpy.data.objects:
         bpy.data.objects.remove(bpy.data.objects['ModelingClothPinGuide'])

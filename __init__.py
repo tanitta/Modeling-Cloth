@@ -19,9 +19,15 @@ if "bpy" in locals():
     imp.reload(SurfaceFollow)
     imp.reload(UVShape)
     imp.reload(DynamicTensionMap)
+    imp.reload(collider)
+    imp.reload(guide_mesh)
+    imp.reload(geometry)
     print("Reloaded multifiles")
 else:
     from . import ModelingCloth, SurfaceFollow, UVShape, DynamicTensionMap
+    from . import collider
+    from . import guide_mesh 
+    from . import geometry
     print("Imported multifiles")
 
    
