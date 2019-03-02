@@ -55,6 +55,13 @@ bl_info = {
     "wiki_url": "",
     "category": '3D View'}
 
+if "bpy" in locals():
+    import imp
+    imp.reload(guide_mesh)
+    imp.reload(collider)
+else:
+    from . import guide_mesh
+    from . import collider 
 
 import bpy
 import bmesh
@@ -476,56 +483,6 @@ def add_virtual_springs(remove=False):
     
     cloth.virtual_springs = np.append(cloth.virtual_springs, virtual_springs, axis=0)
     # gets appended to eidx in the cloth_init function after calling get connected polys in case geometry changes
-
-
-def generate_guide_mesh():
-    """Makes the arrow that appears when creating pins"""
-    verts = [[0.0, 0.0, 0.0], [-0.01, -0.01, 0.1], [-0.01, 0.01, 0.1], [0.01, -0.01, 0.1], [0.01, 0.01, 0.1], [-0.03, -0.03, 0.1], [-0.03, 0.03, 0.1], [0.03, 0.03, 0.1], [0.03, -0.03, 0.1], [-0.01, -0.01, 0.2], [-0.01, 0.01, 0.2], [0.01, -0.01, 0.2], [0.01, 0.01, 0.2]]
-    edges = [[0, 5], [5, 6], [6, 7], [7, 8], [8, 5], [1, 2], [2, 4], [4, 3], [3, 1], [5, 1], [2, 6], [4, 7], [3, 8], [9, 10], [10, 12], [12, 11], [11, 9], [3, 11], [9, 1], [2, 10], [12, 4], [6, 0], [7, 0], [8, 0]]
-    faces = [[0, 5, 6], [0, 6, 7], [0, 7, 8], [0, 8, 5], [1, 3, 11, 9], [1, 2, 6, 5], [2, 4, 7, 6], [4, 3, 8, 7], [3, 1, 5, 8], [12, 10, 9, 11], [4, 2, 10, 12], [3, 4, 12, 11], [2, 1, 9, 10]]
-    name = 'ModelingClothPinGuide'
-    if 'ModelingClothPinGuide' in bpy.data.objects:
-        mesh_ob = bpy.data.objects['ModelingClothPinGuide']
-    else:   
-        mesh = bpy.data.meshes.new('ModelingClothPinGuide')
-        mesh.from_pydata(verts, edges, faces)  
-        mesh.update()
-        mesh_ob = bpy.data.objects.new(name, mesh)
-        bpy.context.scene.objects.link(mesh_ob)
-        mesh_ob.show_x_ray = True
-    return mesh_ob
-
-
-def create_giude():
-    """Spawns the guide"""
-    if 'ModelingClothPinGuide' in bpy.data.objects:
-        mesh_ob = bpy.data.objects['ModelingClothPinGuide']
-        return mesh_ob
-    mesh_ob = generate_guide_mesh()
-    bpy.context.scene.objects.active = mesh_ob
-    bpy.ops.object.material_slot_add()
-    if 'ModelingClothPinGuide' in bpy.data.materials:
-        mat = bpy.data.materials['ModelingClothPinGuide']
-    else:    
-        mat = bpy.data.materials.new(name='ModelingClothPinGuide')
-    mat.use_transparency = True
-    mat.alpha = 0.35            
-    mat.emit = 2     
-    mat.game_settings.alpha_blend = 'ALPHA_ANTIALIASING'
-    mat.diffuse_color = (1, 1, 0)
-    mesh_ob.material_slots[0].material = mat
-    return mesh_ob
-
-
-def delete_giude():
-    """Deletes the arrow"""
-    if 'ModelingClothPinGuide' in bpy.data.objects:
-        bpy.data.objects.remove(bpy.data.objects['ModelingClothPinGuide'])
-    if 'ModelingClothPinGuide' in bpy.data.meshes:        
-        guide_mesh = bpy.data.meshes['ModelingClothPinGuide']
-        guide_mesh.user_clear()
-        bpy.data.meshes.remove(guide_mesh)
-    
 
 def scale_source(multiplier):
     """grow or shrink the source shape"""
@@ -1544,86 +1501,6 @@ def tile_and_remove_neighbors(vidx, tidx, c_peat, t_peat):
     return c_peat, t_peat
 
 
-class Collider(object):
-    pass
-
-
-class SelfCollider(object):
-    pass
-
-
-def create_collider():
-    col = Collider()
-    col.ob = bpy.context.object
-
-    # get proxy
-    proxy = col.ob.to_mesh(bpy.context.scene, True, 'PREVIEW')
-    
-    col.co = get_proxy_co(col.ob, None, proxy)
-    col.idxer = np.arange(col.co.shape[0], dtype=np.int32)
-    proxy_in_place(col, proxy)
-    col.v_normals = proxy_v_normals(col.ob, proxy)
-    col.vel = np.copy(col.co)
-    col.tridex = triangulate(proxy)
-    col.tridexer = np.arange(col.tridex.shape[0], dtype=np.int32)
-    # cross_vecs used later by barycentric tri check
-    proxy_v_normals_in_place(col, True, proxy)
-    marginalized = col.co + col.v_normals * col.ob.modeling_cloth_outer_margin
-    col.cross_vecs, col.origins, col.normals = get_tri_normals(marginalized[col.tridex])    
-    
-    # remove proxy
-    bpy.data.meshes.remove(proxy)
-    return col
-
-
-# Self collision object
-def create_self_collider():
-    # maybe fixed? !!! bug where first frame of collide uses empty data. Stuff goes flying.
-    col = Collider()
-    col.ob = bpy.context.object
-    col.co = get_co(col.ob, None)
-    proxy_in_place(col)
-    col.v_normals = proxy_v_normals(col.ob)
-    col.vel = np.copy(col.co)
-    #col.tridex = triangulate(col.ob)
-    col.tridexer = np.arange(col.tridex.shape[0], dtype=np.int32)
-    # cross_vecs used later by barycentric tri check
-    proxy_v_normals_in_place(col)
-    marginalized = col.co + col.v_normals * col.ob.modeling_cloth_outer_margin
-    col.cross_vecs, col.origins, col.normals = get_tri_normals(marginalized[col.tridex])    
-
-    return col
-
-
-# collide object updater
-def collision_object_update(self, context):
-    """Updates the collider object"""    
-    collide = self.modeling_cloth_object_collision
-    # remove objects from dict if deleted
-    cull_list = []
-    if 'colliders' in extra_data:
-        if extra_data['colliders'] is not None:   
-            if not collide:
-                if self.name in extra_data['colliders']:
-                    del(extra_data['colliders'][self.name])
-            for i in extra_data['colliders']:
-                remove = True
-                if i in bpy.data.objects:
-                    if bpy.data.objects[i].type == "MESH":
-                        if bpy.data.objects[i].modeling_cloth_object_collision:
-                            remove = False
-                if remove:
-                    cull_list.append(i)
-    for i in cull_list:
-        del(extra_data['colliders'][i])
-
-    # add class to dict if true.
-    if collide:    
-        if 'colliders' not in extra_data:    
-            extra_data['colliders'] = {}
-        if extra_data['colliders'] is None:
-            extra_data['colliders'] = {}
-        extra_data['colliders'][self.name] = create_collider()
 
     
 # cloth object detect updater:
@@ -2327,7 +2204,7 @@ def create_properties():
     # external collisions ------->>>
     bpy.types.Object.modeling_cloth_object_collision = bpy.props.BoolProperty(name="Modeling Cloth Self Collsion", 
         description="Detect and collide with this object", 
-        default=False, update=collision_object_update)
+        default=False, update=collider.collision_object_update)
 
     #bpy.types.Object.modeling_cloth_collision_animated = bpy.props.BoolProperty(name="Modeling Cloth Collsion Animated", 
         #description="Treat collide object as animated. (turn off for speed on static objects)", 
